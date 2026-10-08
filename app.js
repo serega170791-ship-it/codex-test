@@ -3,6 +3,9 @@
 // 不依赖服务器；所有提示词只写入当前来源的 localStorage。
 const STORAGE_KEY = "bingxiu-ai-prompts-v1";
 const MODELS = ["可灵", "Seedance", "MiniMax H3", "其他"];
+const BACKUP_APP = "bingxiu-ai-prompts";
+const BACKUP_VERSION = 1;
+const MAX_BACKUP_BYTES = 50 * 1024 * 1024;
 const $ = (id) => document.getElementById(id);
 let prompts = [];
 let activeModel = "全部";
@@ -11,6 +14,9 @@ let detailId = null;
 let deletingId = null;
 let storageBlocked = false;
 let toastTimer;
+let importRecords = null;
+let importReadToken = 0;
+let overwriteSnapshot = null;
 
 function showMessage(message) {
   clearTimeout(toastTimer);
@@ -21,7 +27,10 @@ function showMessage(message) {
 
 function decodePrompts(raw) {
   if (raw === null) return [];
-  const data = JSON.parse(raw);
+  return validatePrompts(JSON.parse(raw));
+}
+
+function validatePrompts(data) {
   const ids = new Set();
   if (!Array.isArray(data) || !data.every((item) => {
     if (!item || typeof item.id !== "string" || !item.id || ids.has(item.id) ||
@@ -33,6 +42,176 @@ function decodePrompts(raw) {
     return true;
   })) throw new Error("INVALID_DATA");
   return data;
+}
+
+function createId() {
+  return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function decodeBackup(text) {
+  // 兼容带 UTF-8 BOM 的文件，以及原始 localStorage 数组备份。
+  const data = JSON.parse(text.replace(/^\uFEFF/, ""));
+  if (Array.isArray(data)) return validatePrompts(data);
+  if (!data || data.app !== BACKUP_APP) throw new Error("INVALID_BACKUP");
+  if (data.version !== BACKUP_VERSION) throw new Error("BACKUP_VERSION");
+  return validatePrompts(data.prompts);
+}
+
+function setImportError(message) {
+  $("import-error").textContent = message;
+  $("import-error").hidden = false;
+}
+
+function exportData() {
+  $("backup-error").hidden = true;
+  let downloadUrl;
+  try {
+    // 必须读取全部本地记录，而不是当前模型筛选后的卡片或旧的内存数据。
+    const records = decodePrompts(localStorage.getItem(STORAGE_KEY));
+    const backup = { app: BACKUP_APP, version: BACKUP_VERSION, exportedAt: new Date().toISOString(), prompts: records };
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json;charset=utf-8" });
+    if (blob.size > MAX_BACKUP_BYTES) throw new Error("BACKUP_SIZE");
+    downloadUrl = URL.createObjectURL(blob);
+    const timestamp = new Intl.DateTimeFormat("sv-SE", {
+      timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
+    }).format(new Date()).replace(/\D/g, "");
+    const link = document.createElement("a");
+    link.href = downloadUrl;
+    link.download = `bingxiu-ai-prompts-${timestamp}.json`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    // 留出时间让浏览器完成下载；不修改 localStorage。
+    setTimeout(() => URL.revokeObjectURL(downloadUrl), 10000);
+    showMessage(`已发起 ${records.length} 条提示词的备份下载，请在下载列表确认文件已保存`);
+  } catch (error) {
+    if (downloadUrl) URL.revokeObjectURL(downloadUrl);
+    $("backup-error").textContent = error.message === "BACKUP_SIZE"
+      ? "数据超过 50 MB，无法生成本工具支持的备份文件。现有数据未修改。"
+      : "导出失败：无法读取有效的本地数据或创建下载文件。请检查浏览器存储和下载权限；现有数据未修改。";
+    $("backup-error").hidden = false;
+  }
+}
+
+function openImport() {
+  importReadToken += 1;
+  importRecords = null;
+  overwriteSnapshot = null;
+  $("import-file").value = "";
+  $("import-summary").hidden = true;
+  $("import-error").hidden = true;
+  $("start-import").disabled = true;
+  document.querySelector('input[name="import-mode"][value="merge"]').checked = true;
+  $("import-dialog").showModal();
+}
+
+async function readImportFile() {
+  const token = ++importReadToken;
+  importRecords = null;
+  $("start-import").disabled = true;
+  $("import-summary").hidden = true;
+  $("import-error").hidden = true;
+  const file = $("import-file").files[0];
+  if (!file) return;
+  try {
+    if (file.size > MAX_BACKUP_BYTES) throw new Error("BACKUP_SIZE");
+    $("import-summary").textContent = "正在检查备份文件…";
+    $("import-summary").hidden = false;
+    const records = decodeBackup(await file.text());
+    // 用户可能在读取完成前重新选择文件或关闭窗口，旧结果不能覆盖新状态。
+    if (token !== importReadToken) return;
+    importRecords = records;
+    $("import-summary").textContent = `已检查「${file.name}」：共 ${records.length} 条提示词，尚未导入。${records.length === 0 ? "注意：空备份在覆盖时会清空现有提示词。" : ""}`;
+    $("start-import").disabled = false;
+  } catch (error) {
+    if (token !== importReadToken) return;
+    $("import-summary").hidden = true;
+    const message = error.message === "BACKUP_SIZE" ? "文件超过 50 MB，请选择本工具导出的备份。"
+      : error.message === "BACKUP_VERSION" ? "不支持此备份版本，请使用与备份版本匹配的工具。"
+      : "文件无效：请选择本工具的 JSON 备份，记录字段、模型和编号必须完整且有效。";
+    setImportError(`${message} 现有数据未修改。`);
+  }
+}
+
+function mergeRecords(current, incoming) {
+  // 编号相同但内容不同的记录不能静默丢弃；保留两条并为导入记录重新编号。
+  const fingerprint = (record) => JSON.stringify([record.name, record.model, record.content, record.notes]);
+  const knownContent = new Set(current.map(fingerprint));
+  const knownIds = new Set(current.map((record) => record.id));
+  const added = [];
+  let skipped = 0;
+  let conflicts = 0;
+  for (const record of incoming) {
+    const signature = fingerprint(record);
+    if (knownContent.has(signature)) { skipped += 1; continue; }
+    let id = record.id;
+    if (knownIds.has(id)) {
+      do { id = createId(); } while (knownIds.has(id));
+      conflicts += 1;
+    }
+    added.push({ ...record, id });
+    knownContent.add(signature);
+    knownIds.add(id);
+  }
+  return { records: [...added, ...current], added: added.length, skipped, conflicts };
+}
+
+function finishImport(records, message) {
+  // setItem 是单次原子写入；失败时不更新页面，也不先 clear/removeItem。
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
+  prompts = records;
+  storageBlocked = false;
+  $("storage-error").hidden = true;
+  $("backup-error").hidden = true;
+  $("add-prompt").disabled = false;
+  $("empty-add").disabled = false;
+  activeModel = "全部";
+  render();
+  if ($("overwrite-dialog").open) $("overwrite-dialog").close();
+  $("import-dialog").close();
+  showMessage(message);
+}
+
+function startImport() {
+  if (!importRecords) return;
+  $("import-error").hidden = true;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (document.querySelector('input[name="import-mode"]:checked').value === "replace") {
+      // 确认期间另一标签页有改动时，阻止旧确认覆盖新数据。
+      overwriteSnapshot = raw;
+      let currentDescription;
+      try { currentDescription = `当前 ${decodePrompts(raw).length} 条提示词`; }
+      catch { currentDescription = "当前无法读取的本地数据"; }
+      $("overwrite-description").textContent = `将用备份中的 ${importRecords.length} 条提示词替换${currentDescription}。${importRecords.length === 0 ? "这会清空全部提示词。" : ""}`;
+      $("overwrite-dialog").showModal();
+      $("overwrite-dialog").querySelector("[data-close]").focus();
+      return;
+    }
+    const result = mergeRecords(decodePrompts(raw), importRecords);
+    finishImport(result.records, `合并完成：新增 ${result.added} 条，跳过 ${result.skipped} 条重复记录${result.conflicts ? `，保留 ${result.conflicts} 条编号冲突记录` : ""}`);
+  } catch (error) {
+    setImportError(error.message === "INVALID_DATA" || error instanceof SyntaxError
+      ? "当前本地数据格式异常，无法合并。可选择覆盖并再次确认，从有效备份恢复；现有数据未修改。"
+      : "导入失败：请检查浏览器存储权限或剩余空间后重试。现有数据未修改，已选择的备份仍保留。");
+  }
+}
+
+function confirmOverwrite() {
+  if (!importRecords) return;
+  try {
+    if (localStorage.getItem(STORAGE_KEY) !== overwriteSnapshot) {
+      $("overwrite-dialog").close();
+      loadPrompts();
+      setImportError("其他标签页已修改本地数据，本次覆盖已取消。请核对后重新点击“开始导入”并确认。");
+      return;
+    }
+    finishImport(importRecords, `恢复完成：已保存 ${importRecords.length} 条提示词`);
+  } catch {
+    $("overwrite-dialog").close();
+    setImportError("覆盖失败：请检查浏览器存储权限或剩余空间后重试。现有数据未修改，已选择的备份仍保留。");
+  }
 }
 
 function reportStorageError(error) {
@@ -187,7 +366,7 @@ $("prompt-form").addEventListener("submit", (event) => {
   }
   if (!$("prompt-form").reportValidity()) return;
   const record = {
-    id: editingId ?? (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`),
+    id: editingId ?? createId(),
     name: $("prompt-name").value.trim(),
     model: $("prompt-model").value,
     content: $("prompt-content").value,
@@ -244,5 +423,14 @@ window.addEventListener("storage", (event) => {
       else $("detail-dialog").close();
     }
   }
+});
+$("export-data").addEventListener("click", exportData);
+$("import-data").addEventListener("click", openImport);
+$("import-file").addEventListener("change", () => { void readImportFile(); });
+$("start-import").addEventListener("click", startImport);
+$("confirm-overwrite").addEventListener("click", confirmOverwrite);
+$("import-dialog").addEventListener("close", () => {
+  importReadToken += 1;
+  importRecords = null;
 });
 loadPrompts();

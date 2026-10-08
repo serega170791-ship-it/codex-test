@@ -26,10 +26,11 @@
 
     <main>
       <header class="page-header"><div><p class="eyebrow">视频创作 · 提示词库</p><h1>秉秀 AI 提示词管理工具</h1></div><span class="local-badge">当前浏览器 · 本地保存</span></header>
-      <div class="storage-note"><span aria-hidden="true">ⓘ</span><p>数据只保存在当前浏览器中，不会上传到云端。更换浏览器或设备、清除网站数据后无法找回；无痕模式关闭后可能丢失。</p></div>
+      <div class="storage-note"><span aria-hidden="true">ⓘ</span><p>数据只保存在当前浏览器中，不会上传到云端。请定期导出备份；更换浏览器或电脑后，可通过“导入数据”恢复。清除网站数据或关闭无痕窗口可能丢失未备份的记录。</p></div>
       <p id="storage-error" class="error-banner" role="alert" hidden></p>
+      <p id="backup-error" class="error-banner" role="alert" hidden></p>
       <section aria-labelledby="list-title">
-        <div class="list-toolbar"><div><h2 id="list-title">全部提示词</h2><p id="list-summary">共 0 条提示词</p></div><button id="add-prompt" class="button primary" type="button"><span aria-hidden="true">＋</span> 添加提示词</button></div>
+        <div class="list-toolbar"><div><h2 id="list-title">全部提示词</h2><p id="list-summary">共 0 条提示词</p></div><div class="toolbar-actions"><button id="export-data" class="button secondary" type="button">导出数据</button><button id="import-data" class="button secondary" type="button">导入数据</button><button id="add-prompt" class="button primary" type="button"><span aria-hidden="true">＋</span> 添加提示词</button></div></div>
         <div id="prompt-list" class="prompt-grid"></div>
         <div id="empty-state" class="empty-state"><div class="empty-icon" aria-hidden="true">≡</div><h3 id="empty-title">开始整理你的第一条提示词</h3><p id="empty-description">把创作灵感收进提示词库，下次使用时一键复制。</p><button id="empty-add" class="button secondary" type="button">添加提示词</button></div>
       </section>
@@ -70,6 +71,26 @@
   <dialog id="delete-dialog" class="small-dialog" aria-labelledby="delete-title">
     <h2 id="delete-title">删除这条提示词？</h2><p id="delete-description"></p><p class="muted">删除后无法恢复。</p><p id="delete-error" class="inline-error" role="alert" hidden></p>
     <div class="dialog-actions"><button class="button secondary" type="button" data-close>取消</button><button id="confirm-delete" class="button destructive" type="button">确认删除</button></div>
+  </dialog>
+
+  <dialog id="import-dialog" aria-labelledby="import-title">
+    <div class="dialog-header"><h2 id="import-title">导入数据</h2><button class="close-button" type="button" data-close aria-label="关闭导入窗口">×</button></div>
+    <p class="form-help">选择之前导出的 JSON 备份文件。文件仅在当前浏览器中读取，不会上传。</p>
+    <label>备份文件<input id="import-file" type="file" accept=".json,application/json" aria-describedby="import-file-help"></label>
+    <p id="import-file-help" class="muted">支持本工具的 JSON 备份，最大 50 MB。选择文件不会立即修改现有数据。</p>
+    <p id="import-summary" class="import-summary" role="status" hidden></p>
+    <fieldset class="import-options"><legend>导入方式</legend>
+      <label class="import-option"><input type="radio" name="import-mode" value="merge" checked><span><strong>合并现有数据</strong><span>保留现有提示词，跳过内容完全相同的记录。发生编号冲突时，两条不同内容都会保留。</span></span></label>
+      <label class="import-option"><input type="radio" name="import-mode" value="replace"><span><strong>覆盖现有数据</strong><span>用备份替换当前全部提示词，操作前需要再次确认。建议先导出当前数据。</span></span></label>
+    </fieldset>
+    <p id="import-error" class="inline-error" role="alert" hidden></p>
+    <div class="dialog-actions"><button class="button secondary" type="button" data-close>取消</button><button id="start-import" class="button primary" type="button" disabled>开始导入</button></div>
+  </dialog>
+
+  <dialog id="overwrite-dialog" class="small-dialog" aria-labelledby="overwrite-title">
+    <h2 id="overwrite-title">确认覆盖现有数据？</h2><p id="overwrite-description"></p>
+    <p class="muted">未包含在备份中的现有记录将被删除。此操作无法撤销，请确认已保留需要的备份文件。</p>
+    <div class="dialog-actions"><button class="button secondary" type="button" data-close>取消</button><button id="confirm-overwrite" class="button destructive" type="button">确认覆盖</button></div>
   </dialog>
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 </body>
