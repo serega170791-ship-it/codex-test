@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="在当前浏览器中整理、分类和复制视频生成提示词。">
+  <title>秉秀 AI 提示词管理工具</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230f766e'/%3E%3Cpath d='M9 9h14v3H9zm0 6h14v3H9zm0 6h9v3H9z' fill='white'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="模型分类">
+      <div class="brand"><span class="brand-mark" aria-hidden="true">秉</span><div><strong>秉秀 AI</strong><span>提示词管理工具</span></div></div>
+      <p class="nav-heading">视频生成模型</p>
+      <nav id="model-filters" aria-label="按模型筛选">
+        <button class="filter active" type="button" data-model="全部" aria-pressed="true"><span>全部提示词</span><span class="count">0</span></button>
+        <button class="filter" type="button" data-model="可灵" aria-pressed="false"><span>可灵</span><span class="count">0</span></button>
+        <button class="filter" type="button" data-model="Seedance" aria-pressed="false"><span>Seedance</span><span class="count">0</span></button>
+        <button class="filter" type="button" data-model="MiniMax H3" aria-pressed="false"><span>MiniMax H3</span><span class="count">0</span></button>
+        <button class="filter" type="button" data-model="其他" aria-pressed="false"><span>其他</span><span class="count">0</span></button>
+      </nav>
+      <div class="sidebar-note"><strong>你的本地提示词库</strong><p>无需登录，添加后即可在当前浏览器中使用。</p></div>
+    </aside>
+
+    <main>
+      <header class="page-header"><div><p class="eyebrow">视频创作 · 提示词库</p><h1>秉秀 AI 提示词管理工具</h1></div><span class="local-badge">当前浏览器 · 本地保存</span></header>
+      <div class="storage-note"><span aria-hidden="true">ⓘ</span><p>数据只保存在当前浏览器中，不会上传到云端。更换浏览器或设备、清除网站数据后无法找回；无痕模式关闭后可能丢失。</p></div>
+      <p id="storage-error" class="error-banner" role="alert" hidden></p>
+      <section aria-labelledby="list-title">
+        <div class="list-toolbar"><div><h2 id="list-title">全部提示词</h2><p id="list-summary">共 0 条提示词</p></div><button id="add-prompt" class="button primary" type="button"><span aria-hidden="true">＋</span> 添加提示词</button></div>
+        <div id="prompt-list" class="prompt-grid"></div>
+        <div id="empty-state" class="empty-state"><div class="empty-icon" aria-hidden="true">≡</div><h3 id="empty-title">开始整理你的第一条提示词</h3><p id="empty-description">把创作灵感收进提示词库，下次使用时一键复制。</p><button id="empty-add" class="button secondary" type="button">添加提示词</button></div>
+      </section>
+      <footer>提示词保存在本地，仅你在当前浏览器中可见。</footer>
+    </main>
+  </div>
+
+  <template id="prompt-card-template">
+    <article class="prompt-card">
+      <div class="card-top"><span class="model-tag"></span><span class="card-type">视频提示词</span></div>
+      <h3 class="prompt-name"></h3><p class="prompt-content"></p>
+      <p class="prompt-notes"></p>
+      <div class="card-actions"><button class="button copy-button" type="button" data-action="copy">复制正文</button><div><button class="text-button" type="button" data-action="view">查看</button><button class="text-button" type="button" data-action="edit">编辑</button><button class="text-button danger" type="button" data-action="delete">删除</button></div></div>
+    </article>
+  </template>
+
+  <dialog id="editor-dialog" aria-labelledby="editor-title">
+    <div class="dialog-header"><h2 id="editor-title">添加提示词</h2><button class="close-button" type="button" data-close aria-label="关闭表单">×</button></div>
+    <form id="prompt-form">
+      <p class="form-help">名称、适用模型和正文为必填项。</p>
+      <div class="form-row"><label>名称 <span aria-hidden="true">*</span><input id="prompt-name" name="name" required maxlength="100" placeholder="例如：雨夜街头的电影镜头"></label><label>适用模型 <span aria-hidden="true">*</span><select id="prompt-model" name="model" required><option>可灵</option><option>Seedance</option><option>MiniMax H3</option><option>其他</option></select></label></div>
+      <label>提示词正文 <span aria-hidden="true">*</span><textarea id="prompt-content" name="content" required maxlength="50000" rows="8" placeholder="描述主体、场景、镜头运动、风格和声音等内容…"></textarea></label>
+      <label>备注 <span class="optional">选填</span><textarea id="prompt-notes" name="notes" maxlength="10000" rows="3" placeholder="记录参数、使用心得或需要注意的细节"></textarea></label>
+      <p id="form-error" class="inline-error" role="alert" hidden></p>
+      <div class="dialog-actions"><button class="button secondary" type="button" data-close>取消</button><button class="button primary" type="submit">保存提示词</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="detail-dialog" aria-labelledby="detail-title">
+    <div class="dialog-header"><h2 id="detail-title"></h2><button class="close-button" type="button" data-close aria-label="关闭详情">×</button></div>
+    <span id="detail-model" class="model-tag"></span>
+    <h3 class="detail-label">提示词正文</h3><pre id="detail-content" class="detail-content"></pre>
+    <h3 class="detail-label">备注</h3><p id="detail-notes" class="detail-notes"></p>
+    <p id="manual-copy-hint" class="inline-error" hidden>浏览器未允许自动复制。请选中上方正文，使用 Ctrl+C（Mac 使用 ⌘C）或长按复制。</p>
+    <div class="dialog-actions"><button class="button secondary" type="button" data-close>关闭</button><button id="detail-copy" class="button primary" type="button">复制正文</button></div>
+  </dialog>
+
+  <dialog id="delete-dialog" class="small-dialog" aria-labelledby="delete-title">
+    <h2 id="delete-title">删除这条提示词？</h2><p id="delete-description"></p><p class="muted">删除后无法恢复。</p><p id="delete-error" class="inline-error" role="alert" hidden></p>
+    <div class="dialog-actions"><button class="button secondary" type="button" data-close>取消</button><button id="confirm-delete" class="button destructive" type="button">确认删除</button></div>
+  </dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>
